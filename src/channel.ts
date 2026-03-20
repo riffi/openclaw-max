@@ -1,7 +1,7 @@
 import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
 import { keepHttpServerTaskAlive } from "openclaw/plugin-sdk/channel-lifecycle";
 import { listNativeCommandSpecsForConfig } from "openclaw/plugin-sdk/reply-runtime";
-import { loadWebMedia } from "openclaw/plugin-sdk/web-media";
+import { loadWebMediaRaw } from "openclaw/plugin-sdk/web-media";
 import { listMaxAccountIds, readAccountConfig, resolveMaxAccount } from "./accounts.js";
 import {
   getMaxBotMe,
@@ -229,7 +229,7 @@ export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
         throw new Error(`MAX token not configured for account "${account.accountId}"`);
       }
       const target = resolveMaxTarget(to);
-      const media = await loadWebMedia(mediaUrl, {
+      const media = await loadWebMediaRaw(mediaUrl, {
         localRoots: mediaLocalRoots,
       });
       const uploadType = resolveMaxUploadType(media.kind);
