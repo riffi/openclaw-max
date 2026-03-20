@@ -1,5 +1,5 @@
 {
-  "name": "openclaw-max",
+  "name": "@riffi/max-plugin",
   "version": "0.1.0",
   "description": "OpenClaw MAX messenger channel plugin scaffold",
   "type": "module",
