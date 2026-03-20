@@ -1,6 +1,6 @@
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/core";
 import type { ReplyPayload } from "openclaw/plugin-sdk";
-import { loadOutboundMediaFromUrl } from "openclaw/plugin-sdk/outbound-media";
+import { loadWebMedia } from "openclaw/plugin-sdk/web-media";
 import { resolveMaxAccount } from "./accounts.js";
 import { sendMaxAttachmentMessage, sendMaxChatAction, sendMaxTextMessage, uploadMaxMedia } from "./api.js";
 import { getMaxBotUsername } from "./runtime.js";
@@ -404,7 +404,7 @@ export async function handleMaxInboundEvent(params: {
 
           if (mediaUrls.length > 0) {
             for (const [index, mediaUrl] of mediaUrls.entries()) {
-              const media = await loadOutboundMediaFromUrl(mediaUrl);
+              const media = await loadWebMedia(mediaUrl);
               const uploadType = resolveMaxUploadType(media.kind);
 
               await sendMaxChatAction({
