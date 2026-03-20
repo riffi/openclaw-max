@@ -1,6 +1,5 @@
 import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
 import { keepHttpServerTaskAlive } from "openclaw/plugin-sdk";
-import { listNativeCommandSpecsForConfig } from "openclaw/plugin-sdk/reply-runtime";
 import { listMaxAccountIds, readAccountConfig, resolveMaxAccount } from "./accounts.js";
 import { getMaxBotMe, registerMaxWebhook, sendMaxTextMessage, setMaxBotCommands } from "./api.js";
 import { MaxChannelConfigSchema } from "./config-schema.js";
@@ -36,15 +35,20 @@ function looksLikeMaxTarget(raw: string): boolean {
   return /^[0-9A-Za-z:_-]+$/.test(raw.trim());
 }
 
-function resolveMaxNativeCommands(cfg: Parameters<typeof listNativeCommandSpecsForConfig>[0]): MaxBotCommand[] {
-  return listNativeCommandSpecsForConfig(cfg, { provider: "max" })
-    .filter((command) => command.name.trim())
-    .slice(0, 32)
-    .map((command) => ({
-      name: command.name.trim(),
-      description: command.description?.trim() || command.name.trim(),
-    }));
-}
+const DEFAULT_MAX_NATIVE_COMMANDS: MaxBotCommand[] = [
+  { name: "help", description: "Show available commands." },
+  { name: "commands", description: "List all slash commands." },
+  { name: "status", description: "Show current status." },
+  { name: "whoami", description: "Show your sender id." },
+  { name: "model", description: "Show or set the model." },
+  { name: "reset", description: "Reset the current session." },
+  { name: "new", description: "Start a new session." },
+  { name: "think", description: "Set thinking level." },
+  { name: "verbose", description: "Toggle verbose mode." },
+  { name: "reasoning", description: "Toggle reasoning visibility." },
+  { name: "usage", description: "Usage footer or cost summary." },
+  { name: "stop", description: "Stop the current run." },
+];
 
 export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
   id: "max",
@@ -95,7 +99,7 @@ export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
         `[${ctx.accountId}] MAX bot authenticated${typeof me.username === "string" ? ` as ${me.username}` : ""}`,
       );
       setMaxBotUsername(ctx.accountId, typeof me.username === "string" ? me.username : undefined);
-      const nativeCommands = resolveMaxNativeCommands(ctx.cfg);
+      const nativeCommands = DEFAULT_MAX_NATIVE_COMMANDS;
       if (nativeCommands.length > 0) {
         await setMaxBotCommands({
           token: ctx.account.token,
