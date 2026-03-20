@@ -87,7 +87,7 @@ export async function sendMaxTextMessage(params: {
       method: "POST",
       body: JSON.stringify({
         text: params.text,
-        ...(params.format ? { format: params.format } : {}),
+        format: params.format ?? "markdown",
       }),
       token: params.token,
       apiBaseUrl: params.apiBaseUrl,
