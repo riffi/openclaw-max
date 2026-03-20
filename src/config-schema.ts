@@ -13,6 +13,7 @@ export const MaxChannelConfigSchema = {
       webhookHost: { type: "string" },
       webhookPort: { type: "number" },
       apiBaseUrl: { type: "string" },
+      groupRequireMention: { type: "boolean" },
       allowFrom: {
         type: "array",
         items: { type: ["string", "number"] },
@@ -33,6 +34,7 @@ export const MaxChannelConfigSchema = {
             webhookHost: { type: "string" },
             webhookPort: { type: "number" },
             apiBaseUrl: { type: "string" },
+            groupRequireMention: { type: "boolean" },
             allowFrom: {
               type: "array",
               items: { type: ["string", "number"] },
@@ -68,6 +70,10 @@ export const MaxChannelConfigSchema = {
     apiBaseUrl: {
       label: "API Base URL",
       placeholder: "https://platform-api.max.ru",
+      advanced: true,
+    },
+    groupRequireMention: {
+      label: "Require mention in groups",
       advanced: true,
     },
   },

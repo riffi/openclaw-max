@@ -11,6 +11,7 @@ export type MaxAccountConfig = {
   webhookHost?: string;
   webhookPort?: number;
   apiBaseUrl?: string;
+  groupRequireMention?: boolean;
   allowFrom?: Array<string | number>;
 };
 

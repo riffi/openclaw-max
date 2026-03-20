@@ -7,7 +7,8 @@ Current state:
 - contains plugin manifest, package metadata, entrypoints, and a minimal channel contract
 - includes first runtime slice: account/token resolution, MAX API client, outbound text send, and webhook listener scaffold
 - includes inbound `message_created -> OpenClaw reply dispatch -> MAX text reply`
-- does not yet implement native slash-command routing, media send, or typing/status actions
+- includes native slash-command routing through the Gateway command path
+- does not yet implement media send or typing/status actions
 
 ## Goal
 
@@ -37,12 +38,37 @@ Point OpenClaw at this repo with `plugins.load.paths`:
 
 Then restart the OpenClaw gateway.
 
+## Access control
+
+Use `channels.max.allowFrom` to define who may talk to the bot:
+
+- direct chat: allow the MAX user id, for example `7678432`
+- group chat: allow the group/chat id as `group:<chatId>`, for example `group:242610078`
+
+Example:
+
+```json5
+{
+  channels: {
+    max: {
+      enabled: true,
+      allowFrom: [7678432, "group:242610078"]
+    }
+  }
+}
+```
+
+Behavior:
+
+- in direct chats, only explicitly allowed user ids are accepted
+- in groups, if the group id is allowed, any participant in that group may talk to the bot
+- entries prefixed as `max:...` also work, for example `max:group:242610078`
+
 ## Planned implementation slices
 
-1. Native command path for slash commands using `CommandSource: "native"`
-2. Outbound media send, `typing_on`, `mark_seen`
-3. Better MAX event modeling for replies/callbacks/groups
-4. Status, setup, and docs polish
+1. Outbound media send, `typing_on`, `mark_seen`
+2. Better MAX event modeling for replies/callbacks/groups
+3. Status, setup, and docs polish
 
 ## Files
 
@@ -59,4 +85,4 @@ Then restart the OpenClaw gateway.
 
 ## Notes
 
-The repo now has a real inbound text path for `message_created`, but it is still intentionally incomplete. Slash commands are still unresolved at the Telegram-native level, and outbound media/actions are not implemented yet.
+The repo now has a real inbound text path for `message_created`, native slash-command routing, and basic `allowFrom` filtering for direct chats and groups. Outbound media/actions are still not implemented yet.

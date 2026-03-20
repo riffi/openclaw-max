@@ -1,8 +1,8 @@
-import { resolveNativeCommandSessionTargets } from "openclaw/plugin-sdk/channel-runtime";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/core";
 import type { ReplyPayload } from "openclaw/plugin-sdk";
 import { resolveMaxAccount } from "./accounts.js";
 import { sendMaxTextMessage } from "./api.js";
+import { getMaxBotUsername } from "./runtime.js";
 import type { MaxWebhookEvent, ResolvedMaxAccount } from "./types.js";
 
 type MaxInboundMessage = {
@@ -10,12 +10,14 @@ type MaxInboundMessage = {
   text: string;
   messageId?: string;
   chatId: string;
+  replyChatId?: string;
   senderId: string;
   senderName?: string;
   senderUsername?: string;
   timestamp?: number;
   chatType: "direct" | "group";
   routeTarget: string;
+  wasMentioned?: boolean;
 };
 
 function asString(value: unknown): string | undefined {
@@ -70,6 +72,7 @@ function resolveInboundMessage(event: MaxWebhookEvent): MaxInboundMessage | null
     text,
     messageId: asString(message?.message_id) || asString(message?.id),
     chatId,
+    replyChatId: recipientChatId || eventChatId || undefined,
     senderId,
     senderName: buildSenderName(message?.sender) || buildSenderName(event.user),
     senderUsername: message?.sender?.username?.trim() || event.user?.username?.trim() || undefined,
@@ -79,15 +82,45 @@ function resolveInboundMessage(event: MaxWebhookEvent): MaxInboundMessage | null
   };
 }
 
-function isAllowedSender(account: ResolvedMaxAccount, senderId: string): boolean {
+function normalizeAllowFromEntry(value: string | number): string {
+  return String(value).trim().replace(/^(max|vkmax):/i, "");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripGroupMention(text: string, botUsername?: string): { text: string; wasMentioned: boolean } {
+  const trimmed = text.trim();
+  const username = botUsername?.trim();
+  if (!username) {
+    return { text: trimmed, wasMentioned: false };
+  }
+
+  const mentionPattern = new RegExp(`(^|\\s)@${escapeRegExp(username)}(?=\\s|$|[,:;.!?])`, "i");
+  if (!mentionPattern.test(trimmed)) {
+    return { text: trimmed, wasMentioned: false };
+  }
+
+  const withoutMention = trimmed.replace(new RegExp(`@${escapeRegExp(username)}(?=\\s|$|[,:;.!?])`, "ig"), " ");
+  return {
+    text: withoutMention.replace(/\s+/g, " ").trim(),
+    wasMentioned: true,
+  };
+}
+
+function isAllowedSender(account: ResolvedMaxAccount, inbound: MaxInboundMessage): boolean {
   const allowFrom = account.config.allowFrom ?? [];
   if (allowFrom.length === 0) {
     return true;
   }
-  const allowed = new Set(
-    allowFrom.map((entry) => String(entry).replace(/^(max|vkmax):/i, "").trim()).filter(Boolean),
-  );
-  return allowed.has(senderId);
+
+  const allowed = new Set(allowFrom.map(normalizeAllowFromEntry).filter(Boolean));
+  if (inbound.chatType === "group") {
+    return allowed.has(`group:${inbound.chatId}`) || allowed.has(inbound.chatId);
+  }
+
+  return allowed.has(inbound.senderId);
 }
 
 function buildFrom(channelId: string, input: MaxInboundMessage): string {
@@ -101,6 +134,22 @@ function isNativeSlashCandidate(text: string): boolean {
   return text.trimStart().startsWith("/");
 }
 
+function resolveNativeCommandSessionTargets(params: {
+  agentId: string;
+  sessionPrefix: string;
+  userId: string;
+  targetSessionKey: string;
+  boundSessionKey?: string;
+  lowercaseSessionKey?: boolean;
+}) {
+  const rawSessionKey =
+    params.boundSessionKey ?? `agent:${params.agentId}:${params.sessionPrefix}:${params.userId}`;
+  return {
+    sessionKey: params.lowercaseSessionKey ? rawSessionKey.toLowerCase() : rawSessionKey,
+    commandTargetSessionKey: params.boundSessionKey ?? params.targetSessionKey,
+  };
+}
+
 export async function handleMaxInboundEvent(params: {
   gateway: ChannelGatewayContext<ResolvedMaxAccount>;
   event: MaxWebhookEvent;
@@ -112,9 +161,31 @@ export async function handleMaxInboundEvent(params: {
 
   const { gateway } = params;
   const account = resolveMaxAccount(gateway.cfg, gateway.accountId);
-  if (!isAllowedSender(account, inbound.senderId)) {
+  const botUsername = getMaxBotUsername(gateway.accountId);
+  const mentionResult =
+    inbound.chatType === "group"
+      ? stripGroupMention(inbound.text, botUsername)
+      : { text: inbound.text, wasMentioned: false };
+  const groupRequireMention = account.config.groupRequireMention === true;
+  if (inbound.chatType === "group" && groupRequireMention && !mentionResult.wasMentioned) {
     gateway.log?.info?.(
-      `[${gateway.accountId}] ignoring MAX sender ${inbound.senderId} (not in allowFrom)`,
+      `[${gateway.accountId}] ignoring MAX group ${inbound.chatId} message without bot mention`,
+    );
+    return;
+  }
+
+  const normalizedInbound = {
+    ...inbound,
+    text: mentionResult.text || inbound.text,
+    wasMentioned: mentionResult.wasMentioned,
+  };
+  if (!isAllowedSender(account, normalizedInbound)) {
+    gateway.log?.info?.(
+      `[${gateway.accountId}] ignoring MAX ${
+        normalizedInbound.chatType === "group"
+          ? `group ${normalizedInbound.chatId}`
+          : `sender ${normalizedInbound.senderId}`
+      } (not in allowFrom)`,
     );
     return;
   }
@@ -137,7 +208,7 @@ export async function handleMaxInboundEvent(params: {
     accountId: gateway.accountId,
     peer: {
       kind: inbound.chatType === "group" ? "group" : "direct",
-      id: inbound.routeTarget,
+      id: normalizedInbound.routeTarget,
     },
   });
   const storePath = runtime.session.resolveStorePath(gateway.cfg.session?.store, {
@@ -150,55 +221,58 @@ export async function handleMaxInboundEvent(params: {
   const envelopeOptions = runtime.reply.resolveEnvelopeFormatOptions(gateway.cfg);
   const body = runtime.reply.formatAgentEnvelope({
     channel: "MAX",
-    from: inbound.chatType === "group" ? `group:${inbound.chatId}` : inbound.senderName ?? inbound.senderId,
-    timestamp: inbound.timestamp,
+    from:
+      normalizedInbound.chatType === "group"
+        ? `group:${normalizedInbound.chatId}`
+        : normalizedInbound.senderName ?? normalizedInbound.senderId,
+    timestamp: normalizedInbound.timestamp,
     previousTimestamp,
     envelope: envelopeOptions,
-    body: inbound.text,
+    body: normalizedInbound.text,
   });
 
-  const nativeCommand = isNativeSlashCandidate(inbound.text);
+  const nativeCommand = isNativeSlashCandidate(normalizedInbound.text);
   const nativeTargets = nativeCommand
     ? resolveNativeCommandSessionTargets({
         agentId: route.agentId,
         sessionPrefix: "max:slash",
-        userId: inbound.senderId,
+        userId: normalizedInbound.senderId,
         targetSessionKey: route.sessionKey,
       })
     : null;
 
   const ctxPayload = runtime.reply.finalizeInboundContext({
-    Body: nativeCommand ? inbound.text : body,
-    BodyForAgent: inbound.text,
-    RawBody: inbound.text,
-    CommandBody: inbound.text,
-    BodyForCommands: inbound.text,
-    From: buildFrom(inbound.routeTarget, inbound),
+    Body: nativeCommand ? normalizedInbound.text : body,
+    BodyForAgent: normalizedInbound.text,
+    RawBody: normalizedInbound.text,
+    CommandBody: normalizedInbound.text,
+    BodyForCommands: normalizedInbound.text,
+    From: buildFrom(normalizedInbound.routeTarget, normalizedInbound),
     To: nativeCommand
-      ? `slash:${inbound.senderId}`
-      : inbound.chatType === "group"
-        ? `max:group:${inbound.chatId}`
-        : `max:${inbound.senderId}`,
+      ? `slash:${normalizedInbound.senderId}`
+      : normalizedInbound.chatType === "group"
+        ? `max:group:${normalizedInbound.chatId}`
+        : `max:${normalizedInbound.senderId}`,
     SessionKey: nativeTargets?.sessionKey ?? route.sessionKey,
     AccountId: gateway.accountId,
-    ChatType: inbound.chatType,
+    ChatType: normalizedInbound.chatType,
     ConversationLabel:
-      inbound.chatType === "group"
-        ? `MAX group ${inbound.chatId}`
-        : inbound.senderName ?? inbound.senderId,
-    SenderName: inbound.senderName,
-    SenderId: inbound.senderId,
-    SenderUsername: inbound.senderUsername,
+      normalizedInbound.chatType === "group"
+        ? `MAX group ${normalizedInbound.chatId}`
+        : normalizedInbound.senderName ?? normalizedInbound.senderId,
+    SenderName: normalizedInbound.senderName,
+    SenderId: normalizedInbound.senderId,
+    SenderUsername: normalizedInbound.senderUsername,
     Provider: "max",
     Surface: "max",
-    MessageSid: inbound.messageId,
-    Timestamp: inbound.timestamp,
-    WasMentioned: nativeCommand ? true : undefined,
+    MessageSid: normalizedInbound.messageId,
+    Timestamp: normalizedInbound.timestamp,
+    WasMentioned: nativeCommand ? true : normalizedInbound.wasMentioned || undefined,
     CommandAuthorized: true,
     CommandSource: nativeCommand ? ("native" as const) : undefined,
     CommandTargetSessionKey: nativeTargets?.commandTargetSessionKey,
     OriginatingChannel: "max" as const,
-    OriginatingTo: inbound.routeTarget,
+    OriginatingTo: normalizedInbound.routeTarget,
   });
 
   await runtime.session.recordInboundSession({
@@ -224,7 +298,11 @@ export async function handleMaxInboundEvent(params: {
         await sendMaxTextMessage({
           token: account.token,
           apiBaseUrl: account.config.apiBaseUrl,
-          chatId: inbound.chatId,
+          ...(normalizedInbound.replyChatId
+            ? { chatId: normalizedInbound.replyChatId }
+            : normalizedInbound.chatType === "group"
+              ? { chatId: normalizedInbound.chatId }
+              : { userId: normalizedInbound.senderId }),
           text,
         });
       },

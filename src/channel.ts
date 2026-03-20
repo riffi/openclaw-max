@@ -1,8 +1,10 @@
 import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
+import { keepHttpServerTaskAlive } from "openclaw/plugin-sdk";
 import { listMaxAccountIds, readAccountConfig, resolveMaxAccount } from "./accounts.js";
 import { getMaxBotMe, registerMaxWebhook, sendMaxTextMessage } from "./api.js";
 import { MaxChannelConfigSchema } from "./config-schema.js";
 import { handleMaxInboundEvent } from "./inbound.js";
+import { setMaxBotUsername } from "./runtime.js";
 import { DEFAULT_ACCOUNT_ID, type ResolvedMaxAccount } from "./types.js";
 import { startMaxWebhookServer } from "./webhook.js";
 
@@ -22,6 +24,9 @@ function normalizeMaxTarget(raw: string): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed) {
     return undefined;
+  }
+  if (/^(max|vkmax):group:/i.test(trimmed)) {
+    return trimmed.replace(/^(max|vkmax):group:/i, "group:");
   }
   return trimmed.replace(/^(max|vkmax):/i, "");
 }
@@ -78,6 +83,7 @@ export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
       ctx.log?.info?.(
         `[${ctx.accountId}] MAX bot authenticated${typeof me.username === "string" ? ` as ${me.username}` : ""}`,
       );
+      setMaxBotUsername(ctx.accountId, typeof me.username === "string" ? me.username : undefined);
 
       if (ctx.account.config.webhookUrl?.trim()) {
         await registerMaxWebhook({
@@ -90,7 +96,7 @@ export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
         ctx.log?.info?.(`[${ctx.accountId}] MAX webhook registered`);
       }
 
-      await startMaxWebhookServer({
+      const server = await startMaxWebhookServer({
         account: ctx.account,
         runtime: ctx.runtime,
         log: ctx.log,
@@ -101,6 +107,11 @@ export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
             event,
           });
         },
+      });
+
+      await keepHttpServerTaskAlive({
+        server,
+        abortSignal: ctx.abortSignal,
       });
     },
     stopAccount: async () => {
@@ -114,10 +125,13 @@ export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
       if (!account.token) {
         throw new Error(`MAX token not configured for account "${account.accountId}"`);
       }
+      const trimmedTarget = to.trim();
+      const isGroup = /^group:/i.test(trimmedTarget);
+      const targetId = trimmedTarget.replace(/^group:/i, "");
       const result = await sendMaxTextMessage({
         token: account.token,
         apiBaseUrl: account.config.apiBaseUrl,
-        chatId: to,
+        ...(isGroup ? { chatId: targetId } : { userId: targetId }),
         text,
       });
       return {

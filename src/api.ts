@@ -18,7 +18,7 @@ async function maxApiRequest<T>(
   const response = await fetch(`${resolveApiBaseUrl(init.apiBaseUrl)}${path}`, {
     method: init.method,
     headers: {
-      Authorization: `Bearer ${init.token}`,
+      Authorization: init.token,
       ...(init.body ? { "Content-Type": "application/json" } : {}),
       ...(init.headers ?? {}),
     },
@@ -41,7 +41,7 @@ async function maxApiRequest<T>(
 }
 
 export async function getMaxBotMe(params: MaxApiRequestOptions): Promise<Record<string, unknown>> {
-  return await maxApiRequest<Record<string, unknown>>("/bot-api/me", {
+  return await maxApiRequest<Record<string, unknown>>("/me", {
     method: "GET",
     ...params,
   });
@@ -50,16 +50,27 @@ export async function getMaxBotMe(params: MaxApiRequestOptions): Promise<Record<
 export async function sendMaxTextMessage(params: {
   token: string;
   apiBaseUrl?: string;
-  chatId: string;
+  chatId?: string;
+  userId?: string;
   text: string;
+  format?: "markdown" | "html";
   signal?: AbortSignal;
-}): Promise<{ messageId?: string; chatId: string }> {
+}): Promise<{ messageId?: string; chatId?: string; userId?: string }> {
+  const targetQuery = params.chatId
+    ? `chat_id=${encodeURIComponent(params.chatId)}`
+    : params.userId
+      ? `user_id=${encodeURIComponent(params.userId)}`
+      : null;
+  if (!targetQuery) {
+    throw new Error("MAX send requires either chatId or userId");
+  }
   const result = await maxApiRequest<Record<string, unknown>>(
-    `/bot-api/chats/${encodeURIComponent(params.chatId)}/messages`,
+    `/messages?${targetQuery}`,
     {
       method: "POST",
       body: JSON.stringify({
         text: params.text,
+        ...(params.format ? { format: params.format } : {}),
       }),
       token: params.token,
       apiBaseUrl: params.apiBaseUrl,
@@ -73,6 +84,7 @@ export async function sendMaxTextMessage(params: {
         ? String(result.message_id)
         : undefined,
     chatId: params.chatId,
+    userId: params.userId,
   };
 }
 
@@ -84,7 +96,7 @@ export async function sendMaxChatAction(params: {
   signal?: AbortSignal;
 }): Promise<void> {
   await maxApiRequest<Record<string, unknown>>(
-    `/bot-api/chats/${encodeURIComponent(params.chatId)}/actions`,
+    `/chats/${encodeURIComponent(params.chatId)}/actions`,
     {
       method: "POST",
       body: JSON.stringify({
@@ -105,7 +117,7 @@ export async function registerMaxWebhook(params: {
   updateTypes?: string[];
   signal?: AbortSignal;
 }): Promise<Record<string, unknown>> {
-  return await maxApiRequest<Record<string, unknown>>("/bot-api/subscriptions", {
+  return await maxApiRequest<Record<string, unknown>>("/subscriptions", {
     method: "POST",
     body: JSON.stringify({
       url: params.url,
@@ -117,4 +129,3 @@ export async function registerMaxWebhook(params: {
     signal: params.signal,
   });
 }
-

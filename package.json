@@ -9,7 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.3.14"
+    "openclaw": ">=2026.3.13"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
@@ -38,4 +38,3 @@
     }
   }
 }
-

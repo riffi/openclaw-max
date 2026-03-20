@@ -1,5 +1,3 @@
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
-import { maxPlugin } from "./src/channel.js";
+import plugin from "./index.js";
 
-export default defineSetupPluginEntry(maxPlugin);
-
+export default plugin;
