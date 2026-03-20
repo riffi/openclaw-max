@@ -10,7 +10,8 @@ Current state:
 - includes optional mention-only behavior for groups
 - sends `mark_seen` and `typing_on` while the agent is working
 - sends text replies as `markdown`
-- does not yet implement outbound media upload/send
+- sends outbound media attachments through MAX uploads API
+- preserves media MIME type during upload
 
 ## Goal
 
@@ -28,6 +29,7 @@ This plugin is intended to become a proper `MAX` channel adapter for OpenClaw so
 - a created MAX bot with a valid bot token
 - a public HTTPS webhook URL reachable by MAX
 - if you want group messages, the bot must be an admin in that MAX group
+- for image-heavy automation, a working browser-capable OpenClaw deployment is still recommended
 
 ## Install
 
@@ -288,12 +290,62 @@ Important:
 - the plugin sends `typing_on` immediately
 - while the reply is being generated, `typing_on` is refreshed every 4 seconds
 - text replies are sent with `format: "markdown"`
+- outbound media uses MAX uploads API and then sends attachments through `POST /messages`
+- local files work, for example `MEDIA:/home/node/.openclaw/workspace/file.jpg`
+- remote media URLs are fetched by OpenClaw and then re-uploaded to MAX by the plugin
+
+## Media
+
+This plugin now supports outbound media.
+
+What works:
+
+- image attachments from local workspace files
+- image attachments from remote URLs after OpenClaw resolves them to media
+- captions together with attachments
+- chat actions such as `sending_photo` before delivery
+
+Important notes:
+
+- MAX upload is sensitive to the actual file contents; if the file is HTML or text with a `.jpg` suffix, MAX will reject it
+- the plugin now preserves media MIME type during upload, which is required for some images to be accepted reliably
+- if OpenClaw emits `MEDIA:/...`, the referenced file must be a real image/video/audio/file, not an error page saved with the wrong extension
+
+## Recommended Image Flow
+
+The most reliable pattern for "find an image on the internet and send it" is:
+
+1. Search for a candidate image source
+2. Validate headers / content type
+3. Download to the workspace
+4. Validate the saved file
+5. Return `MEDIA:/...`
+
+A practical helper used in a real deployment:
+
+```bash
+python3 /home/node/.openclaw/workspace/bin/fetch_openverse_image.py \
+  "zucchini" \
+  /home/node/.openclaw/workspace/zucchini
+```
+
+That helper:
+
+- searches Openverse API
+- sets a non-empty `User-Agent`
+- checks `Content-Type`
+- downloads the first valid image
+- validates the downloaded file signature
+
+This avoids the common failure mode where the agent guesses raw Wikimedia URLs and saves `HTML` or rate-limit pages as `.jpg`.
+
+If your deployment has a workspace instruction layer like `AGENTS.md` / `TOOLS.md`, it is worth documenting this helper there so the agent prefers it over raw hotlink guessing.
 
 ## Still missing
 
-1. Outbound media upload/send
-2. Better MAX event modeling for replies/callbacks/groups
-3. Setup/test automation and docs polish
+1. Better MAX event modeling for replies/callbacks/groups
+2. Setup/test automation and docs polish
+3. More robust handling for every MAX upload response variant and recovery queue cleanup
 
 ## Files
 
@@ -310,4 +362,4 @@ Important:
 
 ## Notes
 
-The repo now has a real inbound text path for `message_created`, OpenClaw-native slash-command routing, dynamic MAX command registration, direct/group access control, group mention gating, read/typing indicators, and markdown text replies. Outbound media is still not implemented yet.
+The repo now has a real inbound text path for `message_created`, OpenClaw-native slash-command routing, dynamic MAX command registration, direct/group access control, group mention gating, read/typing indicators, markdown text replies, and outbound media delivery.
