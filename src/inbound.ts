@@ -1,7 +1,8 @@
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/core";
 import type { ReplyPayload } from "openclaw/plugin-sdk";
+import { loadOutboundMediaFromUrl } from "openclaw/plugin-sdk/outbound-media";
 import { resolveMaxAccount } from "./accounts.js";
-import { sendMaxChatAction, sendMaxTextMessage } from "./api.js";
+import { sendMaxAttachmentMessage, sendMaxChatAction, sendMaxTextMessage, uploadMaxMedia } from "./api.js";
 import { getMaxBotUsername } from "./runtime.js";
 import type { MaxWebhookEvent, ResolvedMaxAccount } from "./types.js";
 
@@ -175,6 +176,58 @@ async function sendMaxActionBestEffort(params: {
   }
 }
 
+function resolvePayloadMediaUrls(payload: ReplyPayload): string[] {
+  if (Array.isArray(payload.mediaUrls) && payload.mediaUrls.length > 0) {
+    return payload.mediaUrls.map((entry) => entry.trim()).filter(Boolean);
+  }
+  if (typeof payload.mediaUrl === "string" && payload.mediaUrl.trim()) {
+    return [payload.mediaUrl.trim()];
+  }
+  return [];
+}
+
+function resolveOutboundTarget(input: MaxInboundMessage):
+  | { chatId: string }
+  | { userId: string } {
+  if (input.replyChatId) {
+    return { chatId: input.replyChatId };
+  }
+  if (input.chatType === "group") {
+    return { chatId: input.chatId };
+  }
+  return { userId: input.senderId };
+}
+
+function resolveMaxUploadType(kind: string | undefined): "image" | "video" | "audio" | "file" {
+  if (kind === "image") {
+    return "image";
+  }
+  if (kind === "video") {
+    return "video";
+  }
+  if (kind === "audio") {
+    return "audio";
+  }
+  return "file";
+}
+
+function resolveSendingAction(kind: string | undefined):
+  | "sending_photo"
+  | "sending_video"
+  | "sending_audio"
+  | "sending_file" {
+  if (kind === "image") {
+    return "sending_photo";
+  }
+  if (kind === "video") {
+    return "sending_video";
+  }
+  if (kind === "audio") {
+    return "sending_audio";
+  }
+  return "sending_file";
+}
+
 export async function handleMaxInboundEvent(params: {
   gateway: ChannelGatewayContext<ResolvedMaxAccount>;
   event: MaxWebhookEvent;
@@ -346,17 +399,48 @@ export async function handleMaxInboundEvent(params: {
       dispatcherOptions: {
         deliver: async (payload: ReplyPayload) => {
           const text = payload.text?.trim();
+          const mediaUrls = resolvePayloadMediaUrls(payload);
+          const target = resolveOutboundTarget(normalizedInbound);
+
+          if (mediaUrls.length > 0) {
+            for (const [index, mediaUrl] of mediaUrls.entries()) {
+              const media = await loadOutboundMediaFromUrl(mediaUrl);
+              const uploadType = resolveMaxUploadType(media.kind);
+
+              await sendMaxChatAction({
+                token: account.token,
+                apiBaseUrl: account.config.apiBaseUrl,
+                chatId: actionChatId,
+                action: resolveSendingAction(media.kind),
+              });
+
+              const attachment = await uploadMaxMedia({
+                token: account.token,
+                apiBaseUrl: account.config.apiBaseUrl,
+                type: uploadType,
+                buffer: media.buffer,
+                fileName: media.fileName ?? `attachment-${index + 1}`,
+                sourceUrl: mediaUrl,
+              });
+
+              await sendMaxAttachmentMessage({
+                token: account.token,
+                apiBaseUrl: account.config.apiBaseUrl,
+                ...target,
+                attachment,
+                ...(index === 0 && text ? { text } : {}),
+              });
+            }
+            return;
+          }
+
           if (!text) {
             return;
           }
           await sendMaxTextMessage({
             token: account.token,
             apiBaseUrl: account.config.apiBaseUrl,
-            ...(normalizedInbound.replyChatId
-              ? { chatId: normalizedInbound.replyChatId }
-              : normalizedInbound.chatType === "group"
-                ? { chatId: normalizedInbound.chatId }
-                : { userId: normalizedInbound.senderId }),
+            ...target,
             text,
           });
         },
