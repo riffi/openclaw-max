@@ -1,4 +1,4 @@
-import type { MaxApiRequestOptions } from "./types.js";
+import type { MaxApiRequestOptions, MaxBotCommand } from "./types.js";
 
 type MaxApiEnvelope<T> = {
   ok?: boolean;
@@ -44,6 +44,23 @@ export async function getMaxBotMe(params: MaxApiRequestOptions): Promise<Record<
   return await maxApiRequest<Record<string, unknown>>("/me", {
     method: "GET",
     ...params,
+  });
+}
+
+export async function setMaxBotCommands(params: {
+  token: string;
+  apiBaseUrl?: string;
+  commands: MaxBotCommand[];
+  signal?: AbortSignal;
+}): Promise<Record<string, unknown>> {
+  return await maxApiRequest<Record<string, unknown>>("/me", {
+    method: "PATCH",
+    body: JSON.stringify({
+      commands: params.commands,
+    }),
+    token: params.token,
+    apiBaseUrl: params.apiBaseUrl,
+    signal: params.signal,
   });
 }
 

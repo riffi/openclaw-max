@@ -1,11 +1,12 @@
 import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
 import { keepHttpServerTaskAlive } from "openclaw/plugin-sdk";
+import { listNativeCommandSpecsForConfig } from "openclaw/plugin-sdk/reply-runtime";
 import { listMaxAccountIds, readAccountConfig, resolveMaxAccount } from "./accounts.js";
-import { getMaxBotMe, registerMaxWebhook, sendMaxTextMessage } from "./api.js";
+import { getMaxBotMe, registerMaxWebhook, sendMaxTextMessage, setMaxBotCommands } from "./api.js";
 import { MaxChannelConfigSchema } from "./config-schema.js";
 import { handleMaxInboundEvent } from "./inbound.js";
 import { setMaxBotUsername } from "./runtime.js";
-import { DEFAULT_ACCOUNT_ID, type ResolvedMaxAccount } from "./types.js";
+import { DEFAULT_ACCOUNT_ID, type MaxBotCommand, type ResolvedMaxAccount } from "./types.js";
 import { startMaxWebhookServer } from "./webhook.js";
 
 const meta = {
@@ -33,6 +34,16 @@ function normalizeMaxTarget(raw: string): string | undefined {
 
 function looksLikeMaxTarget(raw: string): boolean {
   return /^[0-9A-Za-z:_-]+$/.test(raw.trim());
+}
+
+function resolveMaxNativeCommands(cfg: Parameters<typeof listNativeCommandSpecsForConfig>[0]): MaxBotCommand[] {
+  return listNativeCommandSpecsForConfig(cfg, { provider: "max" })
+    .filter((command) => command.name.trim())
+    .slice(0, 32)
+    .map((command) => ({
+      name: command.name.trim(),
+      description: command.description?.trim() || command.name.trim(),
+    }));
 }
 
 export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
@@ -84,6 +95,18 @@ export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
         `[${ctx.accountId}] MAX bot authenticated${typeof me.username === "string" ? ` as ${me.username}` : ""}`,
       );
       setMaxBotUsername(ctx.accountId, typeof me.username === "string" ? me.username : undefined);
+      const nativeCommands = resolveMaxNativeCommands(ctx.cfg);
+      if (nativeCommands.length > 0) {
+        await setMaxBotCommands({
+          token: ctx.account.token,
+          apiBaseUrl: ctx.account.config.apiBaseUrl,
+          commands: nativeCommands,
+          signal: ctx.abortSignal,
+        });
+        ctx.log?.info?.(
+          `[${ctx.accountId}] MAX native commands registered (${nativeCommands.length})`,
+        );
+      }
 
       if (ctx.account.config.webhookUrl?.trim()) {
         await registerMaxWebhook({

@@ -70,3 +70,8 @@ export type MaxApiRequestOptions = {
   apiBaseUrl?: string;
   signal?: AbortSignal;
 };
+
+export type MaxBotCommand = {
+  name: string;
+  description?: string | null;
+};
