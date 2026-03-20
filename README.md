@@ -5,9 +5,12 @@ External OpenClaw channel plugin for VK MAX messenger.
 Current state:
 - includes inbound `message_created -> OpenClaw reply dispatch -> MAX text reply`
 - includes native slash-command routing through the Gateway command path
+- registers native MAX bot commands from the OpenClaw command catalog
 - includes direct/group `allowFrom`
 - includes optional mention-only behavior for groups
-- does not yet implement media send or typing/status actions
+- sends `mark_seen` and `typing_on` while the agent is working
+- sends text replies as `markdown`
+- does not yet implement outbound media upload/send
 
 ## Goal
 
@@ -19,7 +22,9 @@ This plugin is intended to become a proper `MAX` channel adapter for OpenClaw so
 
 ## Requirements
 
-- OpenClaw `>= 2026.3.13`
+- OpenClaw current `main` or a recent build that exports:
+  - `openclaw/plugin-sdk/channel-lifecycle`
+  - `openclaw/plugin-sdk/reply-runtime`
 - a created MAX bot with a valid bot token
 - a public HTTPS webhook URL reachable by MAX
 - if you want group messages, the bot must be an admin in that MAX group
@@ -44,6 +49,7 @@ Your `docker-compose.yml` needs a read-only mount so OpenClaw can load the exter
 ```yaml
 services:
   openclaw-gateway:
+    shm_size: 2gb
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
@@ -62,8 +68,10 @@ services:
       traefik.enable: "true"
       traefik.docker.network: web
       traefik.http.routers.max-plugin.entrypoints: websecure
+      traefik.http.routers.max-plugin.tls: "true"
       traefik.http.routers.max-plugin.rule: Host(`max.example.com`)
       traefik.http.routers.max-plugin.tls.certresolver: letsencrypt
+      traefik.http.routers.max-plugin.service: max-plugin
       traefik.http.services.max-plugin.loadbalancer.server.port: "8788"
 
 networks:
@@ -71,23 +79,9 @@ networks:
     external: true
 ```
 
+`shm_size: 2gb` is recommended because many OpenClaw installs also use browser tooling in the same gateway container.
+
 ### 3. Enable the plugin in `openclaw.json`
-
-Point OpenClaw at this repo with `plugins.load.paths`:
-
-```json5
-{
-  plugins: {
-    load: {
-      paths: ["C:/path/to/openclaw-max"]
-    },
-    allow: ["max"],
-    entries: {
-      max: { enabled: true }
-    }
-  }
-}
-```
 
 Use the container path, not the host path:
 
@@ -152,6 +146,7 @@ docker compose restart openclaw-gateway
 On startup the plugin should:
 
 - authenticate the bot with MAX
+- register native MAX commands
 - register the webhook
 - start the local webhook listener on `8788`
 
@@ -167,6 +162,7 @@ Expected lines are similar to:
 
 ```text
 [max] [default] MAX bot authenticated as <bot_username>
+[max] [default] MAX native commands registered (<n>)
 [max] [default] MAX webhook registered
 [max] [default] MAX webhook listener started on http://0.0.0.0:8788/webhook
 ```
@@ -179,6 +175,37 @@ Then test in MAX:
 - group chat: send `/status`
 
 If `groupRequireMention` is `true`, plain group text without mention is ignored, but standalone slash commands still work for allowed senders.
+
+### 7. Traefik note
+
+In one real deployment, Traefik did not pick up the Docker labels for `max.example.com` after rebuilding the OpenClaw image, even though the labels were present on the container.
+
+The practical fallback was a file-provider route:
+
+```yaml
+http:
+  routers:
+    max-plugin-file:
+      entryPoints:
+        - websecure
+      rule: Host(`max.example.com`)
+      service: max-plugin-file
+      tls:
+        certResolver: letsencrypt
+  services:
+    max-plugin-file:
+      loadBalancer:
+        servers:
+          - url: http://openclaw-openclaw-gateway-1:8788
+```
+
+Example path:
+
+```text
+/opt/traefik/dynamic/max-plugin.yml
+```
+
+If Docker-label routing works in your environment, you do not need this fallback. If `https://max.example.com/healthz` returns Traefik `404 page not found` while the plugin listener is alive inside the gateway, this fallback is the fastest fix.
 
 ## Access control
 
@@ -252,12 +279,21 @@ Important:
 - commands should be sent as a standalone message starting with `/`
 - in groups, command-only messages bypass mention gating for allowed senders
 - normal group text still follows `groupRequireMention`
+- native MAX bot commands are also registered through `PATCH /me { commands: [...] }`
+- on a recent OpenClaw build this list is taken from the system native command catalog, not from a hardcoded static list
 
-## Planned implementation slices
+## Delivery behavior
 
-1. Outbound media send, `typing_on`, `mark_seen`
+- incoming accepted messages trigger `mark_seen`
+- the plugin sends `typing_on` immediately
+- while the reply is being generated, `typing_on` is refreshed every 4 seconds
+- text replies are sent with `format: "markdown"`
+
+## Still missing
+
+1. Outbound media upload/send
 2. Better MAX event modeling for replies/callbacks/groups
-3. Status, setup, and docs polish
+3. Setup/test automation and docs polish
 
 ## Files
 
@@ -274,4 +310,4 @@ Important:
 
 ## Notes
 
-The repo now has a real inbound text path for `message_created`, native slash-command routing, direct/group access control, and group mention gating. Outbound media/actions are still not implemented yet.
+The repo now has a real inbound text path for `message_created`, OpenClaw-native slash-command routing, dynamic MAX command registration, direct/group access control, group mention gating, read/typing indicators, and markdown text replies. Outbound media is still not implemented yet.
