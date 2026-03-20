@@ -204,7 +204,7 @@ async function uploadMaxMultipart(params: {
 }): Promise<Record<string, unknown>> {
   const body = new FormData();
   body.append(
-    "data",
+    "file",
     new Blob([Buffer.from(params.buffer)]),
     params.fileName,
   );
