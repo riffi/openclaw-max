@@ -1,5 +1,6 @@
 import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
-import { keepHttpServerTaskAlive } from "openclaw/plugin-sdk";
+import { keepHttpServerTaskAlive } from "openclaw/plugin-sdk/channel-lifecycle";
+import { listNativeCommandSpecsForConfig } from "openclaw/plugin-sdk/reply-runtime";
 import { listMaxAccountIds, readAccountConfig, resolveMaxAccount } from "./accounts.js";
 import { getMaxBotMe, registerMaxWebhook, sendMaxTextMessage, setMaxBotCommands } from "./api.js";
 import { MaxChannelConfigSchema } from "./config-schema.js";
@@ -50,6 +51,17 @@ const DEFAULT_MAX_NATIVE_COMMANDS: MaxBotCommand[] = [
   { name: "stop", description: "Stop the current run." },
 ];
 
+function resolveMaxNativeCommands(cfg: Parameters<typeof listNativeCommandSpecsForConfig>[0]): MaxBotCommand[] {
+  const commands = listNativeCommandSpecsForConfig(cfg, { provider: "max" })
+    .filter((command) => command.name.trim())
+    .slice(0, 32)
+    .map((command) => ({
+      name: command.name.trim(),
+      description: command.description?.trim() || command.name.trim(),
+    }));
+  return commands.length > 0 ? commands : DEFAULT_MAX_NATIVE_COMMANDS;
+}
+
 export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
   id: "max",
   meta,
@@ -99,7 +111,7 @@ export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
         `[${ctx.accountId}] MAX bot authenticated${typeof me.username === "string" ? ` as ${me.username}` : ""}`,
       );
       setMaxBotUsername(ctx.accountId, typeof me.username === "string" ? me.username : undefined);
-      const nativeCommands = DEFAULT_MAX_NATIVE_COMMANDS;
+      const nativeCommands = resolveMaxNativeCommands(ctx.cfg);
       if (nativeCommands.length > 0) {
         await setMaxBotCommands({
           token: ctx.account.token,
