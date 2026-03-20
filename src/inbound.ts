@@ -1,7 +1,7 @@
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/core";
 import type { ReplyPayload } from "openclaw/plugin-sdk";
 import { resolveMaxAccount } from "./accounts.js";
-import { sendMaxTextMessage } from "./api.js";
+import { sendMaxChatAction, sendMaxTextMessage } from "./api.js";
 import { getMaxBotUsername } from "./runtime.js";
 import type { MaxWebhookEvent, ResolvedMaxAccount } from "./types.js";
 
@@ -154,6 +154,27 @@ function resolveNativeCommandSessionTargets(params: {
   };
 }
 
+async function sendMaxActionBestEffort(params: {
+  token: string;
+  apiBaseUrl?: string;
+  chatId: string;
+  action: "typing_on" | "mark_seen";
+  gateway: ChannelGatewayContext<ResolvedMaxAccount>;
+}): Promise<void> {
+  try {
+    await sendMaxChatAction({
+      token: params.token,
+      apiBaseUrl: params.apiBaseUrl,
+      chatId: params.chatId,
+      action: params.action,
+    });
+  } catch (error) {
+    params.gateway.log?.warn?.(
+      `[${params.gateway.accountId}] MAX action ${params.action} failed: ${String(error)}`,
+    );
+  }
+}
+
 export async function handleMaxInboundEvent(params: {
   gateway: ChannelGatewayContext<ResolvedMaxAccount>;
   event: MaxWebhookEvent;
@@ -204,6 +225,30 @@ export async function handleMaxInboundEvent(params: {
     gateway.log?.warn?.(`[${gateway.accountId}] channelRuntime unavailable; inbound skipped`);
     return;
   }
+  const actionChatId = normalizedInbound.replyChatId ?? normalizedInbound.chatId;
+  await sendMaxActionBestEffort({
+    token: account.token,
+    apiBaseUrl: account.config.apiBaseUrl,
+    chatId: actionChatId,
+    action: "mark_seen",
+    gateway,
+  });
+  await sendMaxActionBestEffort({
+    token: account.token,
+    apiBaseUrl: account.config.apiBaseUrl,
+    chatId: actionChatId,
+    action: "typing_on",
+    gateway,
+  });
+  const typingTimer = setInterval(() => {
+    void sendMaxActionBestEffort({
+      token: account.token,
+      apiBaseUrl: account.config.apiBaseUrl,
+      chatId: actionChatId,
+      action: "typing_on",
+      gateway,
+    });
+  }, 4000);
 
   runtime.activity.record({
     channel: "max",
@@ -294,31 +339,35 @@ export async function handleMaxInboundEvent(params: {
     },
   });
 
-  await runtime.reply.dispatchReplyWithBufferedBlockDispatcher({
-    ctx: ctxPayload,
-    cfg: gateway.cfg,
-    dispatcherOptions: {
-      deliver: async (payload: ReplyPayload) => {
-        const text = payload.text?.trim();
-        if (!text) {
-          return;
-        }
-        await sendMaxTextMessage({
-          token: account.token,
-          apiBaseUrl: account.config.apiBaseUrl,
-          ...(normalizedInbound.replyChatId
-            ? { chatId: normalizedInbound.replyChatId }
-            : normalizedInbound.chatType === "group"
-              ? { chatId: normalizedInbound.chatId }
-              : { userId: normalizedInbound.senderId }),
-          text,
-        });
+  try {
+    await runtime.reply.dispatchReplyWithBufferedBlockDispatcher({
+      ctx: ctxPayload,
+      cfg: gateway.cfg,
+      dispatcherOptions: {
+        deliver: async (payload: ReplyPayload) => {
+          const text = payload.text?.trim();
+          if (!text) {
+            return;
+          }
+          await sendMaxTextMessage({
+            token: account.token,
+            apiBaseUrl: account.config.apiBaseUrl,
+            ...(normalizedInbound.replyChatId
+              ? { chatId: normalizedInbound.replyChatId }
+              : normalizedInbound.chatType === "group"
+                ? { chatId: normalizedInbound.chatId }
+                : { userId: normalizedInbound.senderId }),
+            text,
+          });
+        },
+        onError: (error, info) => {
+          gateway.log?.error?.(
+            `[${gateway.accountId}] MAX dispatch ${info.kind} failed: ${String(error)}`,
+          );
+        },
       },
-      onError: (error, info) => {
-        gateway.log?.error?.(
-          `[${gateway.accountId}] MAX dispatch ${info.kind} failed: ${String(error)}`,
-        );
-      },
-    },
-  });
+    });
+  } finally {
+    clearInterval(typingTimer);
+  }
 }
