@@ -249,6 +249,9 @@ export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
         type: uploadType,
         buffer: media.buffer,
         fileName: media.fileName ?? "attachment",
+        contentType:
+          ("contentType" in media && typeof media.contentType === "string" ? media.contentType : undefined) ??
+          ("mimeType" in media && typeof media.mimeType === "string" ? media.mimeType : undefined),
         sourceUrl: mediaUrl,
       });
 

@@ -420,6 +420,9 @@ export async function handleMaxInboundEvent(params: {
                 type: uploadType,
                 buffer: media.buffer,
                 fileName: media.fileName ?? `attachment-${index + 1}`,
+                contentType:
+                  ("contentType" in media && typeof media.contentType === "string" ? media.contentType : undefined) ??
+                  ("mimeType" in media && typeof media.mimeType === "string" ? media.mimeType : undefined),
                 sourceUrl: mediaUrl,
               });
 

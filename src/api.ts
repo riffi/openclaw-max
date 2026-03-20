@@ -200,12 +200,13 @@ async function uploadMaxMultipart(params: {
   uploadUrl: string;
   buffer: Uint8Array;
   fileName: string;
+  contentType?: string;
   signal?: AbortSignal;
 }): Promise<Record<string, unknown>> {
   const body = new FormData();
   body.append(
     "file",
-    new Blob([Buffer.from(params.buffer)]),
+    new Blob([Buffer.from(params.buffer)], params.contentType ? { type: params.contentType } : undefined),
     params.fileName,
   );
   const response = await fetch(params.uploadUrl, {
@@ -253,6 +254,7 @@ export async function uploadMaxMedia(params: {
   type: MaxUploadType;
   buffer: Uint8Array;
   fileName: string;
+  contentType?: string;
   sourceUrl?: string;
   signal?: AbortSignal;
 }): Promise<MaxAttachmentRequest> {
@@ -288,6 +290,7 @@ export async function uploadMaxMedia(params: {
     uploadUrl: upload.url,
     buffer: params.buffer,
     fileName: params.fileName,
+    contentType: params.contentType,
     signal: params.signal,
   });
 
