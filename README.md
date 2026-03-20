@@ -321,25 +321,14 @@ The most reliable pattern for "find an image on the internet and send it" is:
 4. Validate the saved file
 5. Return `MEDIA:/...`
 
-A practical helper used in a real deployment:
+Practical guidance:
 
-```bash
-python3 /home/node/.openclaw/workspace/bin/fetch_openverse_image.py \
-  "zucchini" \
-  /home/node/.openclaw/workspace/zucchini
-```
+- prefer stable image sources or image-search providers over guessed raw file URLs
+- check `Content-Type` before downloading when possible
+- validate the downloaded file instead of trusting the extension
+- avoid hotlink guessing patterns that can return `HTML`, rate-limit pages, or redirects saved as `.jpg`
 
-That helper:
-
-- searches Openverse API
-- sets a non-empty `User-Agent`
-- checks `Content-Type`
-- downloads the first valid image
-- validates the downloaded file signature
-
-This avoids the common failure mode where the agent guesses raw Wikimedia URLs and saves `HTML` or rate-limit pages as `.jpg`.
-
-If your deployment has a workspace instruction layer like `AGENTS.md` / `TOOLS.md`, it is worth documenting this helper there so the agent prefers it over raw hotlink guessing.
+If your OpenClaw deployment has a workspace instruction layer such as `AGENTS.md` / `TOOLS.md`, document a deployment-specific helper or policy there so the agent prefers your reliable image-fetch path over ad-hoc URL guessing.
 
 ## Still missing
 
