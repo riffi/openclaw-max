@@ -2,8 +2,14 @@ import type { ChannelGatewayContext } from "openclaw/plugin-sdk/core";
 import type { ReplyPayload } from "openclaw/plugin-sdk";
 import { loadWebMediaRaw } from "openclaw/plugin-sdk/web-media";
 import { resolveMaxAccount } from "./accounts.js";
-import { sendMaxAttachmentMessage, sendMaxChatAction, sendMaxTextMessage, uploadMaxMedia } from "./api.js";
-import { getMaxBotUsername } from "./runtime.js";
+import {
+  getMaxBotMe,
+  sendMaxAttachmentMessage,
+  sendMaxChatAction,
+  sendMaxTextMessage,
+  uploadMaxMedia,
+} from "./api.js";
+import { getMaxBotUsername, setMaxBotUsername } from "./runtime.js";
 import type { MaxWebhookEvent, ResolvedMaxAccount } from "./types.js";
 
 type MaxInboundMessage = {
@@ -95,23 +101,64 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function stripGroupMention(text: string, botUsername?: string): { text: string; wasMentioned: boolean } {
+function stripGroupMention(text: string, aliases: string[]): { text: string; wasMentioned: boolean } {
   const trimmed = text.trim();
-  const username = botUsername?.trim();
-  if (!username) {
+  const normalizedAliases = aliases.map((value) => value.trim()).filter(Boolean);
+  if (normalizedAliases.length === 0) {
     return { text: trimmed, wasMentioned: false };
   }
 
-  const mentionPattern = new RegExp(`(^|\\s)@${escapeRegExp(username)}(?=\\s|$|[,:;.!?])`, "i");
+  const aliasPattern = normalizedAliases.map(escapeRegExp).join("|");
+  const mentionPattern = new RegExp(`(^|\\s)@(?:${aliasPattern})(?=\\s|$|[,:;.!?])`, "i");
   if (!mentionPattern.test(trimmed)) {
     return { text: trimmed, wasMentioned: false };
   }
 
-  const withoutMention = trimmed.replace(new RegExp(`@${escapeRegExp(username)}(?=\\s|$|[,:;.!?])`, "ig"), " ");
+  const withoutMention = trimmed.replace(
+    new RegExp(`@(?:${aliasPattern})(?=\\s|$|[,:;.!?])`, "ig"),
+    " ",
+  );
   return {
     text: withoutMention.replace(/\s+/g, " ").trim(),
     wasMentioned: true,
   };
+}
+
+async function resolveBotMentionAliases(params: {
+  gateway: ChannelGatewayContext<ResolvedMaxAccount>;
+  account: ResolvedMaxAccount;
+}): Promise<string[]> {
+  const aliases = new Set<string>();
+  const cachedUsername = getMaxBotUsername(params.gateway.accountId);
+  if (cachedUsername?.trim()) {
+    aliases.add(cachedUsername.trim());
+  }
+
+  if (aliases.size === 0) {
+    try {
+      const me = await getMaxBotMe({
+        token: params.account.token,
+        apiBaseUrl: params.account.config.apiBaseUrl,
+        signal: params.gateway.abortSignal,
+      });
+      if (typeof me.username === "string" && me.username.trim()) {
+        const username = me.username.trim();
+        aliases.add(username);
+        setMaxBotUsername(params.gateway.accountId, username);
+      }
+      if (typeof me.name === "string" && me.name.trim()) {
+        aliases.add(me.name.trim());
+      } else if (typeof me.first_name === "string" && me.first_name.trim()) {
+        aliases.add(me.first_name.trim());
+      }
+    } catch (error) {
+      params.gateway.log?.warn?.(
+        `[${params.gateway.accountId}] MAX mention alias refresh failed: ${String(error)}`,
+      );
+    }
+  }
+
+  return Array.from(aliases);
 }
 
 function isAllowedSender(account: ResolvedMaxAccount, inbound: MaxInboundMessage): boolean {
@@ -239,10 +286,13 @@ export async function handleMaxInboundEvent(params: {
 
   const { gateway } = params;
   const account = resolveMaxAccount(gateway.cfg, gateway.accountId);
-  const botUsername = getMaxBotUsername(gateway.accountId);
+  const botMentionAliases =
+    inbound.chatType === "group"
+      ? await resolveBotMentionAliases({ gateway, account })
+      : [];
   const mentionResult =
     inbound.chatType === "group"
-      ? stripGroupMention(inbound.text, botUsername)
+      ? stripGroupMention(inbound.text, botMentionAliases)
       : { text: inbound.text, wasMentioned: false };
   const normalizedInbound = {
     ...inbound,
