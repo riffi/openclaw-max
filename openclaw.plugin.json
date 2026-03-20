@@ -1,0 +1,94 @@
+{
+  "id": "max",
+  "name": "MAX",
+  "description": "VK MAX messenger channel plugin for OpenClaw",
+  "version": "0.1.0",
+  "channels": ["max"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "name": {
+        "type": "string"
+      },
+      "botToken": {
+        "type": "string"
+      },
+      "tokenFile": {
+        "type": "string"
+      },
+      "webhookUrl": {
+        "type": "string"
+      },
+      "webhookSecret": {
+        "type": "string"
+      },
+      "webhookPath": {
+        "type": "string"
+      },
+      "webhookHost": {
+        "type": "string"
+      },
+      "webhookPort": {
+        "type": "number"
+      },
+      "apiBaseUrl": {
+        "type": "string"
+      },
+      "allowFrom": {
+        "type": "array",
+        "items": {
+          "type": ["string", "number"]
+        }
+      },
+      "accounts": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "botToken": {
+              "type": "string"
+            },
+            "tokenFile": {
+              "type": "string"
+            },
+            "webhookUrl": {
+              "type": "string"
+            },
+            "webhookSecret": {
+              "type": "string"
+            },
+            "webhookPath": {
+              "type": "string"
+            },
+            "webhookHost": {
+              "type": "string"
+            },
+            "webhookPort": {
+              "type": "number"
+            },
+            "apiBaseUrl": {
+              "type": "string"
+            },
+            "allowFrom": {
+              "type": "array",
+              "items": {
+                "type": ["string", "number"]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

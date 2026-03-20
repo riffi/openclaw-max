@@ -1,0 +1,41 @@
+{
+  "name": "openclaw-max",
+  "version": "0.1.0",
+  "description": "OpenClaw MAX messenger channel plugin scaffold",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.14"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "setupEntry": "./setup-entry.ts",
+    "channel": {
+      "id": "max",
+      "label": "MAX",
+      "selectionLabel": "MAX Messenger",
+      "docsPath": "/channels/max",
+      "docsLabel": "max",
+      "blurb": "VK MAX messenger Bot API integration for OpenClaw.",
+      "aliases": [
+        "vkmax"
+      ],
+      "order": 95,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "localPath": ".",
+      "defaultChoice": "local"
+    }
+  }
+}
+
