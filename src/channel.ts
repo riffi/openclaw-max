@@ -1,8 +1,17 @@
 import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
 import { keepHttpServerTaskAlive } from "openclaw/plugin-sdk/channel-lifecycle";
 import { listNativeCommandSpecsForConfig } from "openclaw/plugin-sdk/reply-runtime";
+import { loadWebMedia } from "openclaw/plugin-sdk/web-media";
 import { listMaxAccountIds, readAccountConfig, resolveMaxAccount } from "./accounts.js";
-import { getMaxBotMe, registerMaxWebhook, sendMaxTextMessage, setMaxBotCommands } from "./api.js";
+import {
+  getMaxBotMe,
+  registerMaxWebhook,
+  sendMaxAttachmentMessage,
+  sendMaxChatAction,
+  sendMaxTextMessage,
+  setMaxBotCommands,
+  uploadMaxMedia,
+} from "./api.js";
 import { MaxChannelConfigSchema } from "./config-schema.js";
 import { handleMaxInboundEvent } from "./inbound.js";
 import { setMaxBotUsername } from "./runtime.js";
@@ -34,6 +43,43 @@ function normalizeMaxTarget(raw: string): string | undefined {
 
 function looksLikeMaxTarget(raw: string): boolean {
   return /^[0-9A-Za-z:_-]+$/.test(raw.trim());
+}
+
+function resolveMaxTarget(raw: string): { chatId?: string; userId?: string } {
+  const trimmedTarget = raw.trim();
+  const isGroup = /^group:/i.test(trimmedTarget);
+  const targetId = trimmedTarget.replace(/^group:/i, "");
+  return isGroup ? { chatId: targetId } : { userId: targetId };
+}
+
+function resolveMaxUploadType(kind: string | undefined): "image" | "video" | "audio" | "file" {
+  if (kind === "image") {
+    return "image";
+  }
+  if (kind === "video") {
+    return "video";
+  }
+  if (kind === "audio") {
+    return "audio";
+  }
+  return "file";
+}
+
+function resolveSendingAction(kind: string | undefined):
+  | "sending_photo"
+  | "sending_video"
+  | "sending_audio"
+  | "sending_file" {
+  if (kind === "image") {
+    return "sending_photo";
+  }
+  if (kind === "video") {
+    return "sending_video";
+  }
+  if (kind === "audio") {
+    return "sending_audio";
+  }
+  return "sending_file";
 }
 
 const DEFAULT_MAX_NATIVE_COMMANDS: MaxBotCommand[] = [
@@ -164,14 +210,54 @@ export const maxPlugin: ChannelPlugin<ResolvedMaxAccount> = {
       if (!account.token) {
         throw new Error(`MAX token not configured for account "${account.accountId}"`);
       }
-      const trimmedTarget = to.trim();
-      const isGroup = /^group:/i.test(trimmedTarget);
-      const targetId = trimmedTarget.replace(/^group:/i, "");
       const result = await sendMaxTextMessage({
         token: account.token,
         apiBaseUrl: account.config.apiBaseUrl,
-        ...(isGroup ? { chatId: targetId } : { userId: targetId }),
+        ...resolveMaxTarget(to),
         text,
+      });
+      return {
+        channel: "max",
+        ok: true,
+        messageId: result.messageId,
+        chatId: result.chatId,
+      };
+    },
+    sendMedia: async ({ to, text, mediaUrl, mediaLocalRoots, accountId, cfg }) => {
+      const account = resolveMaxAccount(cfg, accountId);
+      if (!account.token) {
+        throw new Error(`MAX token not configured for account "${account.accountId}"`);
+      }
+      const target = resolveMaxTarget(to);
+      const media = await loadWebMedia(mediaUrl, {
+        localRoots: mediaLocalRoots,
+      });
+      const uploadType = resolveMaxUploadType(media.kind);
+
+      if (target.chatId) {
+        await sendMaxChatAction({
+          token: account.token,
+          apiBaseUrl: account.config.apiBaseUrl,
+          chatId: target.chatId,
+          action: resolveSendingAction(media.kind),
+        });
+      }
+
+      const attachment = await uploadMaxMedia({
+        token: account.token,
+        apiBaseUrl: account.config.apiBaseUrl,
+        type: uploadType,
+        buffer: media.buffer,
+        fileName: media.fileName ?? "attachment",
+        sourceUrl: mediaUrl,
+      });
+
+      const result = await sendMaxAttachmentMessage({
+        token: account.token,
+        apiBaseUrl: account.config.apiBaseUrl,
+        ...target,
+        attachment,
+        ...(text?.trim() ? { text } : {}),
       });
       return {
         channel: "max",
