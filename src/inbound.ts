@@ -47,6 +47,10 @@ function buildSenderName(
   return combined || value.name?.trim() || undefined;
 }
 
+function isMaxGroupChatId(chatId: string): boolean {
+  return /^-/.test(chatId.trim());
+}
+
 function resolveInboundMessage(event: MaxWebhookEvent): MaxInboundMessage | null {
   if (event.update_type !== "message_created") {
     return null;
@@ -66,7 +70,7 @@ function resolveInboundMessage(event: MaxWebhookEvent): MaxInboundMessage | null
   }
 
   const chatId = recipientChatId || eventChatId || senderId;
-  const isGroup = Boolean(recipientChatId && recipientChatId !== senderId);
+  const isGroup = isMaxGroupChatId(chatId);
   return {
     updateType: event.update_type,
     text,
@@ -166,19 +170,12 @@ export async function handleMaxInboundEvent(params: {
     inbound.chatType === "group"
       ? stripGroupMention(inbound.text, botUsername)
       : { text: inbound.text, wasMentioned: false };
-  const groupRequireMention = account.config.groupRequireMention === true;
-  if (inbound.chatType === "group" && groupRequireMention && !mentionResult.wasMentioned) {
-    gateway.log?.info?.(
-      `[${gateway.accountId}] ignoring MAX group ${inbound.chatId} message without bot mention`,
-    );
-    return;
-  }
-
   const normalizedInbound = {
     ...inbound,
     text: mentionResult.text || inbound.text,
     wasMentioned: mentionResult.wasMentioned,
   };
+  const nativeCommand = isNativeSlashCandidate(normalizedInbound.text);
   if (!isAllowedSender(account, normalizedInbound)) {
     gateway.log?.info?.(
       `[${gateway.accountId}] ignoring MAX ${
@@ -186,6 +183,18 @@ export async function handleMaxInboundEvent(params: {
           ? `group ${normalizedInbound.chatId}`
           : `sender ${normalizedInbound.senderId}`
       } (not in allowFrom)`,
+    );
+    return;
+  }
+  const groupRequireMention = account.config.groupRequireMention === true;
+  if (
+    normalizedInbound.chatType === "group" &&
+    groupRequireMention &&
+    !normalizedInbound.wasMentioned &&
+    !nativeCommand
+  ) {
+    gateway.log?.info?.(
+      `[${gateway.accountId}] ignoring MAX group ${normalizedInbound.chatId} message without bot mention`,
     );
     return;
   }
@@ -231,7 +240,6 @@ export async function handleMaxInboundEvent(params: {
     body: normalizedInbound.text,
   });
 
-  const nativeCommand = isNativeSlashCandidate(normalizedInbound.text);
   const nativeTargets = nativeCommand
     ? resolveNativeCommandSessionTargets({
         agentId: route.agentId,
