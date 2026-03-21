@@ -3,6 +3,10 @@ import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import type { ChannelLogSink } from "openclaw/plugin-sdk/core";
 import type { MaxWebhookEvent, ResolvedMaxAccount } from "./types.js";
 
+const MAX_WEBHOOK_REPLAY_WINDOW_MS = 5 * 60_000;
+const MAX_WEBHOOK_REPLAY_MAX_SIZE = 5000;
+const recentWebhookEvents = new Map<string, number>();
+
 function headerValue(req: IncomingMessage, key: string): string | undefined {
   const value = req.headers[key];
   return Array.isArray(value) ? value[0] : value;
@@ -21,6 +25,44 @@ function send(res: ServerResponse, statusCode: number, body: string): void {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.end(body);
+}
+
+function resolveReplayKey(event: MaxWebhookEvent): string | undefined {
+  const updateType = typeof event.update_type === "string" ? event.update_type.trim() : "";
+  const messageId = event.message?.message_id ?? event.message?.id;
+  if (!updateType || messageId === undefined || messageId === null) {
+    return undefined;
+  }
+  return `${updateType}:${String(messageId)}`;
+}
+
+function pruneRecentWebhookEvents(nowMs: number): void {
+  const cutoff = nowMs - MAX_WEBHOOK_REPLAY_WINDOW_MS;
+  for (const [key, seenAt] of recentWebhookEvents) {
+    if (seenAt < cutoff) {
+      recentWebhookEvents.delete(key);
+    }
+  }
+  while (recentWebhookEvents.size > MAX_WEBHOOK_REPLAY_MAX_SIZE) {
+    const oldestKey = recentWebhookEvents.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    recentWebhookEvents.delete(oldestKey);
+  }
+}
+
+function isReplayEvent(event: MaxWebhookEvent, nowMs: number): boolean {
+  pruneRecentWebhookEvents(nowMs);
+  const replayKey = resolveReplayKey(event);
+  if (!replayKey) {
+    return false;
+  }
+  if (recentWebhookEvents.has(replayKey)) {
+    return true;
+  }
+  recentWebhookEvents.set(replayKey, nowMs);
+  return false;
 }
 
 export async function startMaxWebhookServer(params: {
@@ -61,7 +103,15 @@ export async function startMaxWebhookServer(params: {
 
     try {
       const event = (await readJsonBody(req)) as MaxWebhookEvent;
-      await params.onEvent(event);
+      if (isReplayEvent(event, Date.now())) {
+        send(res, 200, "ok");
+        return;
+      }
+      void params.onEvent(event).catch((error) => {
+        params.log?.error?.(
+          `[${params.account.accountId}] MAX webhook request failed: ${String(error)}`,
+        );
+      });
       send(res, 200, "ok");
     } catch (error) {
       params.log?.error?.(
