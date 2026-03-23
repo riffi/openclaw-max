@@ -38,7 +38,11 @@ function normalizeMaxTarget(raw: string): string | undefined {
   if (/^(max|vkmax):group:/i.test(trimmed)) {
     return trimmed.replace(/^(max|vkmax):group:/i, "group:");
   }
-  return trimmed.replace(/^(max|vkmax):/i, "");
+  const normalized = trimmed.replace(/^(max|vkmax):/i, "");
+  if (/^-/.test(normalized) && !/^group:/i.test(normalized)) {
+    return `group:${normalized}`;
+  }
+  return normalized;
 }
 
 function looksLikeMaxTarget(raw: string): boolean {
@@ -47,7 +51,7 @@ function looksLikeMaxTarget(raw: string): boolean {
 
 function resolveMaxTarget(raw: string): { chatId?: string; userId?: string } {
   const trimmedTarget = raw.trim();
-  const isGroup = /^group:/i.test(trimmedTarget);
+  const isGroup = /^group:/i.test(trimmedTarget) || /^-/.test(trimmedTarget);
   const targetId = trimmedTarget.replace(/^group:/i, "");
   return isGroup ? { chatId: targetId } : { userId: targetId };
 }
