@@ -1,6 +1,6 @@
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/core";
 import type { ReplyPayload } from "openclaw/plugin-sdk";
-import { loadWebMediaRaw } from "openclaw/plugin-sdk/web-media";
+import { getDefaultLocalRoots, loadWebMediaRaw } from "openclaw/plugin-sdk/web-media";
 import { resolveMaxAccount } from "./accounts.js";
 import {
   getMaxBotMe,
@@ -76,6 +76,30 @@ function inferAttachmentMime(type: string | undefined): string | undefined {
   }
 }
 
+function isHttpMediaRef(value: string): boolean {
+  return /^https?:\/\//i.test(value.trim());
+}
+
+/** OpenClaw media-understanding resolves local files from MediaPaths only; bare paths in MediaUrls are fetched as URLs and break. */
+function buildInboundMediaContextFields(mediaUrls: string[] | undefined): {
+  MediaPath?: string;
+  MediaPaths?: string[];
+  MediaUrl?: string;
+  MediaUrls?: string[];
+} {
+  if (!mediaUrls?.length) {
+    return {};
+  }
+  const mediaPaths = mediaUrls.map((u) => (isHttpMediaRef(u) ? "" : u));
+  const first = mediaUrls[0]!.trim();
+  return {
+    MediaPath: isHttpMediaRef(first) ? undefined : mediaUrls[0],
+    MediaPaths: mediaPaths,
+    MediaUrl: mediaUrls[0],
+    MediaUrls: mediaUrls,
+  };
+}
+
 function resolveAttachmentPlaceholder(types: string[]): string {
   if (types.length === 0) {
     return "<media:attachment>";
@@ -93,11 +117,11 @@ function resolveAttachmentPlaceholder(types: string[]): string {
   return "<media:attachment>";
 }
 
-function resolveInboundMedia(message: MaxWebhookEvent["message"]): {
+async function resolveInboundMedia(message: MaxWebhookEvent["message"]): Promise<{
   mediaUrls: string[];
   mediaTypes: string[];
   mediaKinds: string[];
-} {
+}> {
   const attachments = [
     ...(Array.isArray(message?.body?.attachments) ? message.body.attachments : []),
     ...(Array.isArray(message?.attachments) ? message.attachments : []),
@@ -133,7 +157,20 @@ function resolveInboundMedia(message: MaxWebhookEvent["message"]): {
       (typeof attachment.payload?.mime_type === "string" && attachment.payload.mime_type.trim()) ||
       inferAttachmentMime(type);
 
-    mediaUrls.push(url);
+    try {
+      const media = await loadWebMediaRaw(url);
+      const tmpDir = `/tmp/openclaw/max-inbound`;
+      const fs = await import("node:fs/promises");
+      await fs.mkdir(tmpDir, { recursive: true });
+      const ext =
+        type === "image" ? "jpg" : type === "video" ? "mp4" : type === "audio" ? "mp3" : "bin";
+      const tmpPath = `${tmpDir}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      await fs.writeFile(tmpPath, media.buffer);
+      mediaUrls.push(tmpPath);
+    } catch {
+      mediaUrls.push(url);
+    }
+
     mediaTypes.push(mime || "");
     mediaKinds.push(type);
   }
@@ -141,13 +178,13 @@ function resolveInboundMedia(message: MaxWebhookEvent["message"]): {
   return { mediaUrls, mediaTypes, mediaKinds };
 }
 
-function resolveInboundMessage(event: MaxWebhookEvent): MaxInboundMessage | null {
+async function resolveInboundMessage(event: MaxWebhookEvent): Promise<MaxInboundMessage | null> {
   if (event.update_type !== "message_created") {
     return null;
   }
 
   const message = event.message;
-  const { mediaUrls, mediaTypes, mediaKinds } = resolveInboundMedia(message);
+  const { mediaUrls, mediaTypes, mediaKinds } = await resolveInboundMedia(message);
   const text =
     message?.body?.text?.trim() ||
     message?.text?.trim() ||
@@ -369,7 +406,7 @@ export async function handleMaxInboundEvent(params: {
   gateway: ChannelGatewayContext<ResolvedMaxAccount>;
   event: MaxWebhookEvent;
 }): Promise<void> {
-  const inbound = resolveInboundMessage(params.event);
+  const inbound = await resolveInboundMessage(params.event);
   if (!inbound) {
     return;
   }
@@ -519,12 +556,10 @@ export async function handleMaxInboundEvent(params: {
     CommandTargetSessionKey: nativeTargets?.commandTargetSessionKey,
     OriginatingChannel: "max" as const,
     OriginatingTo: normalizedInbound.routeTarget,
-    MediaUrl: normalizedInbound.mediaUrls?.[0],
-    MediaUrls: normalizedInbound.mediaUrls,
+    ...buildInboundMediaContextFields(normalizedInbound.mediaUrls),
     MediaType: normalizedInbound.mediaTypes?.[0],
     MediaTypes: normalizedInbound.mediaTypes,
   });
-
   await runtime.session.recordInboundSession({
     storePath,
     sessionKey: ctxPayload.SessionKey ?? route.sessionKey,
@@ -548,7 +583,9 @@ export async function handleMaxInboundEvent(params: {
 
           if (mediaUrls.length > 0) {
             for (const [index, mediaUrl] of mediaUrls.entries()) {
-              const media = await loadWebMediaRaw(mediaUrl);
+              const media = await loadWebMediaRaw(mediaUrl, {
+                localRoots: getDefaultLocalRoots(),
+              });
               const uploadType = resolveMaxUploadType(media.kind);
 
               await sendMaxChatAction({
