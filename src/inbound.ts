@@ -25,6 +25,9 @@ type MaxInboundMessage = {
   chatType: "direct" | "group";
   routeTarget: string;
   wasMentioned?: boolean;
+  mediaUrls?: string[];
+  mediaTypes?: string[];
+  mediaKinds?: string[];
 };
 
 function asString(value: unknown): string | undefined {
@@ -58,13 +61,97 @@ function isMaxGroupChatId(chatId: string): boolean {
   return /^-/.test(chatId.trim());
 }
 
+function inferAttachmentMime(type: string | undefined): string | undefined {
+  switch (type) {
+    case "image":
+      return "image/jpeg";
+    case "video":
+      return "video/mp4";
+    case "audio":
+      return "audio/mpeg";
+    case "file":
+      return "application/octet-stream";
+    default:
+      return undefined;
+  }
+}
+
+function resolveAttachmentPlaceholder(types: string[]): string {
+  if (types.length === 0) {
+    return "<media:attachment>";
+  }
+  const uniqueTypes = Array.from(new Set(types));
+  const first = uniqueTypes[0];
+  if (uniqueTypes.length === 1) {
+    const label =
+      first === "image" || first === "video" || first === "audio" ? first : "attachment";
+    if (types.length > 1) {
+      return `<media:${label}> (${types.length} ${label}${types.length === 1 ? "" : "s"})`;
+    }
+    return `<media:${label}>`;
+  }
+  return "<media:attachment>";
+}
+
+function resolveInboundMedia(message: MaxWebhookEvent["message"]): {
+  mediaUrls: string[];
+  mediaTypes: string[];
+  mediaKinds: string[];
+} {
+  const attachments = [
+    ...(Array.isArray(message?.body?.attachments) ? message.body.attachments : []),
+    ...(Array.isArray(message?.attachments) ? message.attachments : []),
+  ];
+  const mediaUrls: string[] = [];
+  const mediaTypes: string[] = [];
+  const mediaKinds: string[] = [];
+
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment !== "object") {
+      continue;
+    }
+    const type = typeof attachment.type === "string" ? attachment.type.trim().toLowerCase() : "";
+    if (!["image", "video", "audio", "file"].includes(type)) {
+      continue;
+    }
+
+    const directUrl =
+      typeof attachment.payload?.url === "string" ? attachment.payload.url.trim() : "";
+    const photoUrls =
+      attachment.payload?.photos && typeof attachment.payload.photos === "object"
+        ? Object.values(attachment.payload.photos)
+            .map((entry) => (typeof entry?.url === "string" ? entry.url.trim() : ""))
+            .filter(Boolean)
+        : [];
+    const url = directUrl || photoUrls[0];
+    if (!url) {
+      continue;
+    }
+
+    const mime =
+      (typeof attachment.mime_type === "string" && attachment.mime_type.trim()) ||
+      (typeof attachment.payload?.mime_type === "string" && attachment.payload.mime_type.trim()) ||
+      inferAttachmentMime(type);
+
+    mediaUrls.push(url);
+    mediaTypes.push(mime || "");
+    mediaKinds.push(type);
+  }
+
+  return { mediaUrls, mediaTypes, mediaKinds };
+}
+
 function resolveInboundMessage(event: MaxWebhookEvent): MaxInboundMessage | null {
   if (event.update_type !== "message_created") {
     return null;
   }
 
   const message = event.message;
-  const text = message?.body?.text?.trim() || message?.text?.trim();
+  const { mediaUrls, mediaTypes, mediaKinds } = resolveInboundMedia(message);
+  const text =
+    message?.body?.text?.trim() ||
+    message?.text?.trim() ||
+    (mediaUrls.length > 0 ? resolveAttachmentPlaceholder(mediaKinds) : undefined);
   if (!text) {
     return null;
   }
@@ -90,6 +177,9 @@ function resolveInboundMessage(event: MaxWebhookEvent): MaxInboundMessage | null
     timestamp: message?.timestamp ?? event.timestamp,
     chatType: isGroup ? "group" : "direct",
     routeTarget: isGroup ? chatId : senderId,
+    mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+    mediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
+    mediaKinds: mediaKinds.length > 0 ? mediaKinds : undefined,
   };
 }
 
@@ -429,6 +519,10 @@ export async function handleMaxInboundEvent(params: {
     CommandTargetSessionKey: nativeTargets?.commandTargetSessionKey,
     OriginatingChannel: "max" as const,
     OriginatingTo: normalizedInbound.routeTarget,
+    MediaUrl: normalizedInbound.mediaUrls?.[0],
+    MediaUrls: normalizedInbound.mediaUrls,
+    MediaType: normalizedInbound.mediaTypes?.[0],
+    MediaTypes: normalizedInbound.mediaTypes,
   });
 
   await runtime.session.recordInboundSession({

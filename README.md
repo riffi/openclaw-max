@@ -3,11 +3,12 @@
 External OpenClaw channel plugin for VK MAX messenger.
 
 Current state:
-- includes inbound `message_created -> OpenClaw reply dispatch -> MAX text reply`
+- includes inbound `message_created -> OpenClaw reply dispatch -> MAX text/media-aware reply`
 - includes native slash-command routing through the Gateway command path
 - registers native MAX bot commands from the OpenClaw command catalog
 - includes direct/group `allowFrom`
 - includes optional mention-only behavior for groups
+- forwards inbound MAX media attachments into OpenClaw `MediaUrl(s)` / media-understanding
 - sends `mark_seen` and `typing_on` while the agent is working
 - sends text replies as `markdown`
 - sends outbound media attachments through MAX uploads API

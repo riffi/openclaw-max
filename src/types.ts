@@ -50,7 +50,25 @@ export type MaxWebhookEvent = {
     timestamp?: number;
     body?: {
       text?: string | null;
+      attachments?: Array<{
+        type?: string | null;
+        mime_type?: string | null;
+        payload?: {
+          url?: string | null;
+          mime_type?: string | null;
+          photos?: Record<string, { token?: string | null; url?: string | null }> | null;
+        } | null;
+      }> | null;
     };
+    attachments?: Array<{
+      type?: string | null;
+      mime_type?: string | null;
+      payload?: {
+        url?: string | null;
+        mime_type?: string | null;
+        photos?: Record<string, { token?: string | null; url?: string | null }> | null;
+      } | null;
+    }> | null;
     text?: string;
   };
   user?: {
