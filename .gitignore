@@ -3,3 +3,4 @@ dist/
 coverage/
 *.log
 
+AGENT_NOTES.md

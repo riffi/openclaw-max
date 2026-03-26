@@ -12,6 +12,10 @@ import {
 import { getMaxBotUsername, setMaxBotUsername } from "./runtime.js";
 import type { MaxWebhookEvent, ResolvedMaxAccount } from "./types.js";
 
+const MAX_INBOUND_DEDUPE_WINDOW_MS = 60 * 60_000;
+const MAX_INBOUND_DEDUPE_MAX_SIZE = 10_000;
+const recentInboundMessages = new Map<string, number>();
+
 type MaxInboundMessage = {
   updateType: string;
   text: string;
@@ -39,6 +43,57 @@ function asString(value: unknown): string | undefined {
     return String(value);
   }
   return undefined;
+}
+
+function pruneRecentInboundMessages(nowMs: number): void {
+  const cutoff = nowMs - MAX_INBOUND_DEDUPE_WINDOW_MS;
+  for (const [key, seenAt] of recentInboundMessages) {
+    if (seenAt < cutoff) {
+      recentInboundMessages.delete(key);
+    }
+  }
+  while (recentInboundMessages.size > MAX_INBOUND_DEDUPE_MAX_SIZE) {
+    const oldestKey = recentInboundMessages.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    recentInboundMessages.delete(oldestKey);
+  }
+}
+
+function buildInboundDedupeKey(params: {
+  accountId: string;
+  inbound: MaxInboundMessage;
+}): string | undefined {
+  if (!params.inbound.messageId) {
+    return undefined;
+  }
+  return [
+    params.accountId,
+    params.inbound.chatId,
+    params.inbound.senderId,
+    params.inbound.messageId,
+  ].join(":");
+}
+
+function isDuplicateInboundMessage(params: {
+  accountId: string;
+  inbound: MaxInboundMessage;
+  nowMs: number;
+}): boolean {
+  pruneRecentInboundMessages(params.nowMs);
+  const key = buildInboundDedupeKey({
+    accountId: params.accountId,
+    inbound: params.inbound,
+  });
+  if (!key) {
+    return false;
+  }
+  if (recentInboundMessages.has(key)) {
+    return true;
+  }
+  recentInboundMessages.set(key, params.nowMs);
+  return false;
 }
 
 function buildSenderName(
@@ -412,6 +467,18 @@ export async function handleMaxInboundEvent(params: {
   }
 
   const { gateway } = params;
+  if (
+    isDuplicateInboundMessage({
+      accountId: gateway.accountId,
+      inbound,
+      nowMs: Date.now(),
+    })
+  ) {
+    gateway.log?.info?.(
+      `[${gateway.accountId}] skipping duplicate MAX inbound message ${inbound.messageId ?? "unknown"}`,
+    );
+    return;
+  }
   const account = resolveMaxAccount(gateway.cfg, gateway.accountId);
   const botMentionAliases =
     inbound.chatType === "group"
