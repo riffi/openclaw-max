@@ -10,6 +10,7 @@ import {
   uploadMaxMedia,
 } from "./api.js";
 import { getMaxBotUsername, setMaxBotUsername } from "./runtime.js";
+import { chunkMaxMarkdownText, MAX_TEXT_CHUNK_LIMIT } from "./text-chunking.js";
 import type { MaxWebhookEvent, ResolvedMaxAccount } from "./types.js";
 
 const MAX_INBOUND_DEDUPE_WINDOW_MS = 60 * 60_000;
@@ -415,6 +416,13 @@ function resolvePayloadMediaUrls(payload: ReplyPayload): string[] {
   return [];
 }
 
+function resolveTextChunks(text: string | undefined): string[] {
+  if (!text?.trim()) {
+    return [];
+  }
+  return chunkMaxMarkdownText(text, MAX_TEXT_CHUNK_LIMIT);
+}
+
 function resolveOutboundTarget(input: MaxInboundMessage):
   | { chatId: string }
   | { userId: string } {
@@ -644,7 +652,7 @@ export async function handleMaxInboundEvent(params: {
       cfg: gateway.cfg,
       dispatcherOptions: {
         deliver: async (payload: ReplyPayload) => {
-          const text = payload.text?.trim();
+          const textChunks = resolveTextChunks(payload.text);
           const mediaUrls = resolvePayloadMediaUrls(payload);
           const target = resolveOutboundTarget(normalizedInbound);
 
@@ -679,21 +687,31 @@ export async function handleMaxInboundEvent(params: {
                 apiBaseUrl: account.config.apiBaseUrl,
                 ...target,
                 attachment,
-                ...(index === 0 && text ? { text } : {}),
+                ...(index === 0 && textChunks[0] ? { text: textChunks[0] } : {}),
+              });
+            }
+            for (const text of textChunks.slice(1)) {
+              await sendMaxTextMessage({
+                token: account.token,
+                apiBaseUrl: account.config.apiBaseUrl,
+                ...target,
+                text,
               });
             }
             return;
           }
 
-          if (!text) {
+          if (textChunks.length === 0) {
             return;
           }
-          await sendMaxTextMessage({
-            token: account.token,
-            apiBaseUrl: account.config.apiBaseUrl,
-            ...target,
-            text,
-          });
+          for (const text of textChunks) {
+            await sendMaxTextMessage({
+              token: account.token,
+              apiBaseUrl: account.config.apiBaseUrl,
+              ...target,
+              text,
+            });
+          }
         },
         onError: (error, info) => {
           gateway.log?.error?.(
